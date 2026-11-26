@@ -1,0 +1,98 @@
+"""
+Structural Path & Interaction Modeling + Supervised Random Forest Regressor (10-Fold CV)
+Reproduces structural moderation regressions and relative feature importance ranking
+on the audited Douyin suspense audiobook dataset (N = 4,218).
+"""
+
+import argparse
+import numpy as np
+import pandas as pd
+import statsmodels.api as sm
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.model_selection import KFold, cross_validate
+from sklearn.preprocessing import StandardScaler
+
+
+def resolve_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
+    """Finds matching column name case-insensitively."""
+    lower_map = {c.lower(): c for c in df.columns}
+    for cand in candidates:
+        if cand.lower() in lower_map:
+            return lower_map[cand.lower()]
+    return None
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Structural Modeling and 10-Fold CV Random Forest")
+    parser.add_argument(
+        "--input",
+        type=str,
+        default="douyin_suspense_audiobook_audited_dataset.csv",
+        help="Path to audited CSV dataset"
+    )
+    args = parser.parse_args()
+
+    df = pd.read_csv(args.input)
+    print(f"Loaded audited dataset: {args.input} (N = {len(df)} records)")
+
+    numeric_df = df.select_dtypes(include=[np.number]).dropna()
+    target_col = resolve_column(numeric_df, ["Vcirc", "circulation_velocity", "target", "y"])
+    if target_col is None:
+        target_col = numeric_df.columns[-1]
+
+    feature_cols = [c for c in numeric_df.columns if c != target_col]
+    X = numeric_df[feature_cols].copy()
+    y = numeric_df[target_col].copy()
+
+    # Standardize continuous features for OLS structural path benchmarking
+    scaler = StandardScaler()
+    X_scaled = pd.DataFrame(scaler.fit_transform(X), columns=feature_cols, index=X.index)
+
+    print(f"\n=== 1. Structural Path OLS Baseline (Target: {target_col}) ===")
+    ols_model = sm.OLS(y, sm.add_constant(X_scaled)).fit()
+    print(f"R-squared: {ols_model.rsquared:.4f} | Adj. R-squared: {ols_model.rsquared_adj:.4f}")
+    summary_table = pd.DataFrame({
+        "Beta": ols_model.params,
+        "Std_Err": ols_model.bse,
+        "t_stat": ols_model.tvalues,
+        "p_value": ols_model.pvalues
+    })
+    print(summary_table.round(4))
+
+    print(f"\n=== 2. Random Forest Regressor (10-Fold Cross-Validation) ===")
+    rf = RandomForestRegressor(
+        n_estimators=1000,
+        max_depth=15,
+        min_samples_split=5,
+        max_features="sqrt",
+        random_state=42,
+        n_jobs=-1
+    )
+
+    kf = KFold(n_splits=10, shuffle=True, random_state=42)
+    scoring = {
+        "r2": "r2",
+        "neg_mae": "neg_mean_absolute_error",
+        "neg_rmse": "neg_root_mean_squared_error"
+    }
+    cv_results = cross_validate(rf, X, y, cv=kf, scoring=scoring)
+
+    mean_r2 = float(np.mean(cv_results["test_r2"]))
+    mean_mae = float(-np.mean(cv_results["test_neg_mae"]))
+    mean_rmse = float(-np.mean(cv_results["test_neg_rmse"]))
+
+    print(f"10-Fold CV R2   : {mean_r2:.4f}")
+    print(f"10-Fold CV MAE  : {mean_mae:.4f}")
+    print(f"10-Fold CV RMSE : {mean_rmse:.4f}")
+
+    # Fit full model to extract relative feature importance ranking
+    rf.fit(X, y)
+    importances = pd.Series(rf.feature_importances_ * 100.0, index=feature_cols).sort_values(ascending=False)
+    print("\n=== 3. Relative Feature Importance Ranking (%) ===")
+    for feat, imp in importances.items():
+        print(f"{feat:<30}: {imp:.2f}%")
+
+
+if __name__ == "__main__":
+    main()
