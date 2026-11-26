@@ -33,7 +33,5 @@ This repository provides the reproducible Python computational pipeline and anon
 * `src/04_pls_sem_and_random_forest.py`: Structural path estimation, moderation analysis (`Flow x Pingshu` and `OCR x E-commerce`), and 10-fold cross-validated Random Forest Regressor (`n_estimators=1000`, `max_depth=15`).
 
 ## 5. Usage Instructions
-1. **Clone the repository:**
-   ```bash
-   git clone [https://github.com/Lyyitian-web/Lyyitian-webRepository.git](https://github.com/Lyyitian-web/Lyyitian-webRepository.git)
-   cd Lyyitian-webRepository
+python src/02_statistical_audit.py --input douyin_suspense_audiobook_audited_dataset.csv
+python src/04_pls_sem_and_random_forest.py --input douyin_suspense_audiobook_audited_dataset.csv
