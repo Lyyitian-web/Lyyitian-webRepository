@@ -1,0 +1,71 @@
+"""
+Non-invasive OSINT Web Extraction Module (Playwright)
+Collects public surface metadata and longitudinal snapshots (T0 and T1 = T0 + 7 days)
+for short-form suspense audiobooks on Douyin without private authentication.
+"""
+
+import argparse
+import asyncio
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+from playwright.async_api import async_playwright
+
+
+TARGET_HASHTAGS = ["#悬疑有声书#", "#民间故事#", "#评书新讲#", "#国潮悬疑#"]
+
+
+async def scrape_public_metadata(hashtag: str, max_records: int = 50) -> list[dict]:
+    """Emulates standard headless browser sessions to capture public DOM/JSON attributes."""
+    records = []
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        context = await browser.new_context(
+            viewport={"width": 1280, "height": 800},
+            locale="zh-CN"
+        )
+        page = await context.new_page()
+
+        # Intercept public JSON feed responses
+        captured_payloads = []
+
+        async def handle_response(response):
+            if "aweme/v1/web/" in response.url and response.status == 200:
+                try:
+                    data = await response.json()
+                    captured_payloads.append(data)
+                except Exception:
+                    pass
+
+        page.on("response", handle_response)
+        search_url = f"https://www.douyin.com/search/{hashtag.strip('#')}"
+        await page.goto(search_url, wait_until="networkidle", timeout=30000)
+        await page.wait_for_timeout(3000)
+
+        timestamp_utc = datetime.now(timezone.utc).isoformat()
+        for idx, payload in enumerate(captured_payloads[:max_records]):
+            records.append({
+                "capture_timestamp_utc": timestamp_utc,
+                "hashtag_query": hashtag,
+                "batch_index": idx,
+                "raw_payload_keys": list(payload.keys())
+            })
+
+        await browser.close()
+    return records
+
+
+def main():
+    parser = argparse.ArgumentParser(description="OSINT Public Metadata Extractor via Playwright")
+    parser.add_argument("--hashtag", type=str, default=TARGET_HASHTAGS[0], help="Target public hashtag")
+    parser.add_argument("--limit", type=int, default=20, help="Maximum public batches to capture")
+    parser.add_argument("--output", type=str, default="raw_snapshot_T0.json", help="Output JSON file")
+    args = parser.parse_args()
+
+    results = asyncio.run(scrape_public_metadata(args.hashtag, args.limit))
+    Path(args.output).write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"Captured {len(results)} public metadata batches -> {args.output}")
+
+
+if __name__ == "__main__":
+    main()
